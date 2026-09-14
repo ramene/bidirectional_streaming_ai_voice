@@ -16,6 +16,14 @@ push-to-talk turns) but swaps every cloud vendor for an on-device model:
 
 Net result: no API keys required, nothing leaves the machine, `$0` per turn.
 
+## Hands-free & fluid
+- **Wake word** — flip *Always-on* and say **"Charlie"** (configurable via `WAKE_WORD`). Client-side VAD calibrates to your room's noise floor, then segments on a ~1s pause. Audible turn cues: rising beep = awake/your-turn, single beep = got-it, falling beep = asleep. Sleep phrases: "stop listening", "go to sleep", etc.
+- **Barge-in** — talk over the reply (or press the button) to interrupt it instantly; the server cancels the in-flight turn.
+- **Robust STT** — English-locked (Whisper was auto-detecting the wrong language and garbling), self-conditioning off (kills runaway repetition loops), plus punctuation/degenerate-output guards so room noise doesn't create junk turns.
+- **British (or any) voice** — Kokoro ships US + British voices; default `bm_george` (British male). Swap with `KOKORO_VOICE`.
+- **Intent-aware routing** — "ideate on X" stays generative instead of being forced into fact-recall; a `CONTEXT_PROVIDER` hook grounds turns when you want facts.
+- **Transcript capture** — every turn is written to `transcripts/session-*.jsonl`.
+
 ## Why a server + browser client
 The original runs on one desktop. Routing STT/LLM/TTS through a small FastAPI + WebSocket
 server lets a phone or tablet be a **thin capture/playback client** while the Mac does all the

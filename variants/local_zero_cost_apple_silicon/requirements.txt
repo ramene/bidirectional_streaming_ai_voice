@@ -2,6 +2,7 @@
 mlx-whisper        # on-device STT (Whisper large-v3-turbo)
 mlx-audio          # on-device TTS (Kokoro-82M)
 misaki[en]         # Kokoro g2p (English)
+loguru             # transitive dep of mlx-audio's Kokoro
 soundfile          # wav encode
 numpy
 fastapi            # web + websocket server

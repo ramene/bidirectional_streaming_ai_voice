@@ -3,75 +3,125 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 <title>Voice Loop — lead brain</title>
 <style>
-  :root{--bg:#0d1017;--panel:#161b26;--ink:#e8edf4;--muted:#93a0b4;--accent:#28c2a6;--user:#3a7afe;--line:#232a38}
+  :root{--bg:#0d1017;--panel:#161b26;--ink:#e8edf4;--muted:#93a0b4;--accent:#28c2a6;--user:#3a7afe;--line:#232a38;--amber:#e6a13c}
   *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
   html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);font:16px/1.5 -apple-system,system-ui,sans-serif}
   #app{display:flex;flex-direction:column;height:100dvh;max-width:720px;margin:0 auto}
   header{padding:14px 18px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:10px}
   header h1{font-size:16px;margin:0;font-weight:650}
-  .dot{width:9px;height:9px;border-radius:50%;background:#c0392b}.dot.on{background:var(--accent)}
+  .dot{width:9px;height:9px;border-radius:50%;background:#c0392b;transition:background .2s}
+  .dot.on{background:var(--accent)} .dot.armed{background:var(--amber);box-shadow:0 0 10px var(--amber);animation:pulse 1.2s infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+  #state{margin-left:auto;font-size:12px;color:var(--muted)}
   #log{flex:1;overflow:auto;padding:16px;display:flex;flex-direction:column;gap:10px}
   .msg{max-width:82%;padding:9px 13px;border-radius:14px;white-space:pre-wrap;word-wrap:break-word}
   .u{align-self:flex-end;background:var(--user);color:#fff;border-bottom-right-radius:4px}
   .a{align-self:flex-start;background:var(--panel);border:1px solid var(--line);border-bottom-left-radius:4px}
   .a .eng{display:block;font-size:11px;color:var(--muted);margin-top:4px}
+  .src{margin-top:8px;padding-top:8px;border-top:1px dashed var(--line);font-size:12px;color:var(--muted);display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+  .chip{background:#0d1219;border:1px solid var(--line);border-radius:8px;padding:2px 8px;color:var(--accent);font-family:ui-monospace,Menlo,monospace;font-size:11.5px}
+  .chip small{color:var(--muted)}
   .sys{align-self:center;color:var(--muted);font-size:13px}
-  footer{padding:16px 18px calc(16px + env(safe-area-inset-bottom));border-top:1px solid var(--line)}
+  footer{padding:14px 18px calc(14px + env(safe-area-inset-bottom));border-top:1px solid var(--line)}
   #ptt{width:100%;padding:20px;border:0;border-radius:16px;background:var(--accent);color:#04231d;
        font-size:19px;font-weight:700;touch-action:none;user-select:none;transition:transform .06s,background .15s}
-  #ptt.rec{background:#e14b4b;color:#fff;transform:scale(.99)}
-  #ptt:disabled{opacity:.5}
-  #status{text-align:center;color:var(--muted);font-size:13px;min-height:18px;margin-top:8px}
+  #ptt.rec{background:#e14b4b;color:#fff;transform:scale(.99)} #ptt:disabled{opacity:.5}
+  #ptt.active{background:var(--amber);color:#2b1c00}
+  .row{display:flex;align-items:center;justify-content:space-between;margin-top:12px;gap:12px}
+  .toggle{display:flex;align-items:center;gap:8px;font-size:14px;color:var(--muted)}
+  .sw{width:44px;height:26px;border-radius:13px;background:#2a2f3a;position:relative;transition:background .2s;cursor:pointer;flex:0 0 auto}
+  .sw.on{background:var(--amber)} .sw::after{content:"";position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:50%;background:#fff;transition:left .2s}
+  .sw.on::after{left:21px}
+  #status{text-align:center;color:var(--muted);font-size:13px;min-height:18px;margin-top:10px}
+  #heard{text-align:center;color:#5b6676;font-size:11px;font-style:italic;min-height:14px;margin-top:2px}
 </style></head><body>
 <div id="app">
-  <header><span id="dot" class="dot"></span><h1>Voice Loop</h1><span id="eng" style="margin-left:auto;color:var(--muted);font-size:12px"></span></header>
+  <header><span id="dot" class="dot"></span><h1>Voice Loop</h1><span id="state"></span></header>
   <div id="log"></div>
   <footer>
     <button id="ptt" disabled>Connecting…</button>
+    <div class="row">
+      <span class="toggle">Always-on <b style="color:var(--amber)">“Charlie”</b></span>
+      <div id="sw" class="sw" role="switch" aria-checked="false"></div>
+    </div>
     <div id="status"></div>
+    <div id="heard"></div>
   </footer>
 </div>
 <script>
-const $=s=>document.querySelector(s), log=$("#log"), ptt=$("#ptt"), statusEl=$("#status"), dot=$("#dot"), engEl=$("#eng");
+const $=s=>document.querySelector(s), log=$("#log"), ptt=$("#ptt"), statusEl=$("#status"), heardEl=$("#heard"),
+      dot=$("#dot"), stateEl=$("#state"), sw=$("#sw");
 const token=new URLSearchParams(location.search).get("token")||"";
-let ws, rec, chunks=[], recording=false;
+let ws, rec, chunks=[], recording=false, alwaysOn=false, active=false, botSpeaking=false;
 const audioQ=[]; let playing=false;
 
 function add(cls,txt,eng){const d=document.createElement("div");d.className="msg "+cls;d.textContent=txt;
   if(eng){const e=document.createElement("span");e.className="eng";e.textContent=eng;d.appendChild(e);}
   log.appendChild(d);log.scrollTop=log.scrollHeight;return d;}
-function sys(t){add("sys",t);}
+function sys(t){const d=document.createElement("div");d.className="sys";d.textContent=t;log.appendChild(d);log.scrollTop=log.scrollHeight;}
+function setState(t){stateEl.textContent=t;}
 
-// --- audio playback queue (plays sentence chunks in order; avatar can hook 'onplay') ---
-function enqueue(b64){
-  const bytes=Uint8Array.from(atob(b64),c=>c.charCodeAt(0));
-  const blob=new Blob([bytes],{type:"audio/wav"});
-  audioQ.push(URL.createObjectURL(blob)); pump();
+// ---- beeps (Web Audio, no files) ----
+let actx, muteVadUntil=0;
+function beep(freqs,dur=0.13,gap=0.06){
+  try{ actx=actx||new (window.AudioContext||window.webkitAudioContext)(); let t=actx.currentTime;
+    freqs.forEach(f=>{const o=actx.createOscillator(),g=actx.createGain();o.type="sine";o.frequency.value=f;
+      o.connect(g);g.connect(actx.destination);
+      g.gain.setValueAtTime(0.0001,t);g.gain.exponentialRampToValueAtTime(0.3,t+0.012);
+      g.gain.exponentialRampToValueAtTime(0.0001,t+dur);o.start(t);o.stop(t+dur);t+=dur+gap;});
+    muteVadUntil=Date.now()+(freqs.length*(dur+gap))*1000+150;   // don't let VAD hear our own beep
+  }catch(e){}
 }
+const beepReady=()=>beep([660,990]);   // rising  = awake / your turn
+const beepGot  =()=>beep([540]);        // single  = got it, processing
+const beepSleep=()=>beep([500,360]);    // falling = asleep
+
+// ---- audio playback queue (avatar can hook onplay/onended for lip-sync) ----
+let curAudio=null;
+function enqueue(b64){audioQ.push(URL.createObjectURL(new Blob([Uint8Array.from(atob(b64),c=>c.charCodeAt(0))],{type:"audio/wav"})));pump();}
 function pump(){
-  if(playing||!audioQ.length)return; playing=true;
-  const url=audioQ.shift(); const a=new Audio(url);
-  a.onended=a.onerror=()=>{URL.revokeObjectURL(url);playing=false;pump();};
+  if(playing){return;}
+  if(!audioQ.length){ if(botSpeaking){botSpeaking=false; if(active){beepReady();setState("🎙️ your turn");statusEl.textContent="Listening — ask a follow-up";}} return; }
+  playing=true;botSpeaking=true;setState("🔊 speaking (talk to interrupt)");
+  const url=audioQ.shift(); const a=new Audio(url); curAudio=a;
+  a.onended=a.onerror=()=>{URL.revokeObjectURL(url);playing=false;curAudio=null;pump();};
   a.play().catch(()=>{playing=false;pump();});
 }
+function stopPlayback(){                         // barge-in: kill audio immediately + drain queue
+  audioQ.forEach(u=>URL.revokeObjectURL(u)); audioQ.length=0;
+  try{if(curAudio){curAudio.pause();curAudio=null;}}catch(e){}
+  playing=false; botSpeaking=false;
+  try{if(ws&&ws.readyState===1)ws.send(JSON.stringify({type:"stop"}));}catch(e){}  // abort server turn
+}
 
-// --- websocket ---
+// ---- websocket ----
 function connect(){
   const proto=location.protocol==="https:"?"wss":"ws";
   ws=new WebSocket(`${proto}://${location.host}/ws?token=${encodeURIComponent(token)}`);
-  ws.onopen=()=>{dot.classList.add("on");ptt.disabled=false;ptt.textContent="Hold to talk";sys("Connected. Hold the button, speak, release.");};
-  ws.onclose=()=>{dot.classList.remove("on");ptt.disabled=true;ptt.textContent="Reconnecting…";setTimeout(connect,1500);};
+  ws.onopen=()=>{dot.classList.add("on");ptt.disabled=alwaysOn;ptt.textContent=alwaysOn?"Always-on mode":"Hold to talk";sys("Connected. Hold to talk, or flip Always-on and say “Charlie”.");};
+  ws.onclose=()=>{dot.classList.remove("on","armed");ptt.disabled=true;ptt.textContent="Reconnecting…";setTimeout(connect,1500);};
   ws.onmessage=e=>{const m=JSON.parse(e.data);
     if(m.type==="user_text")add("u",m.text);
-    else if(m.type==="reply_text")add("a",m.text,m.engine);
+    else if(m.type==="reply_text"){const d=add("a",m.text,m.engine);
+      if(m.sources&&m.sources.length){const s=document.createElement("div");s.className="src";
+        s.innerHTML="🔎 "+m.sources.map(x=>`<span class="chip" title="${(x.project||"")}/${(x.file||"")}">[${x.n}] ${x.source} <small>${x.project||""}</small></span>`).join(" ");
+        d.appendChild(s);}}
     else if(m.type==="audio")enqueue(m.b64);
-    else if(m.type==="turn_end"){const t=m.timing||{};engEl.textContent=`stt ${t.stt||"–"}s · llm ${t.llm||"–"}s · total ${t.total||"–"}s`;statusEl.textContent="";ptt.disabled=false;}
+    else if(m.type==="idle_heard"){heardEl.textContent="heard: “"+m.text+"”";}
+    else if(m.type==="wake"){
+      if(m.state==="armed"){active=true;dot.classList.add("armed");beepReady();setState("🎙️ your turn");statusEl.textContent="Awake — ask your question";heardEl.textContent="";}
+      else{active=false;dot.classList.remove("armed");beepSleep();setState("💤 asleep");statusEl.textContent="Asleep — say “Charlie”";}}
+    else if(m.type==="mode_ack"){/* handled on toggle */}
+    else if(m.type==="interrupted"){statusEl.textContent="";}
+    else if(m.type==="turn_end"){const t=m.timing||{};stateEl.title=`stt ${t.stt||"–"}s · llm ${t.llm||"–"}s · total ${t.total||"–"}s`;
+      if(!alwaysOn){statusEl.textContent="";ptt.disabled=false;}}
   };
 }
 
-// --- push-to-talk ---
+// ---- push-to-talk ----
 async function startRec(){
-  if(recording||!ws||ws.readyState!==1)return;
+  if(recording||alwaysOn||!ws||ws.readyState!==1)return;
+  if(botSpeaking||playing)stopPlayback();     // pressing the button while it talks = interrupt
   try{
     const stream=await navigator.mediaDevices.getUserMedia({audio:true});
     rec=new MediaRecorder(stream,{mimeType:MediaRecorder.isTypeSupported("audio/webm")?"audio/webm":""});
@@ -84,9 +134,62 @@ async function startRec(){
   }catch(err){sys("Mic error: "+err.message);}
 }
 function stopRec(){if(!recording)return;recording=false;ptt.classList.remove("rec");ptt.textContent="Hold to talk";try{rec.stop();}catch(e){}}
-// pointer events cover mouse + touch (iPad/iPhone Safari)
 ptt.addEventListener("pointerdown",e=>{e.preventDefault();startRec();});
 ptt.addEventListener("pointerup",e=>{e.preventDefault();stopRec();});
 ptt.addEventListener("pointercancel",stopRec);
+
+// ---- always-on: VAD segments speech on pauses; server gates on the wake phrase ----
+let micStream,ac,analyser,vadTimer,segRec,segChunks=[],speaking=false,silence=0,segStart=0;
+const SILENCE_MS=1000, MIN_MS=400, MAX_MS=14000;   // 1s pause = end of turn
+let THRESH=0.028;                                   // set by calibration to the room's noise floor
+function rmsNow(buf){analyser.getByteTimeDomainData(buf);let s=0;for(const v of buf){const x=(v-128)/128;s+=x*x;}return Math.sqrt(s/buf.length);}
+async function startAlwaysOn(){
+  try{
+    micStream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true}});
+    ac=new (window.AudioContext||window.webkitAudioContext)();
+    const src=ac.createMediaStreamSource(micStream);analyser=ac.createAnalyser();analyser.fftSize=512;src.connect(analyser);
+    const buf=new Uint8Array(analyser.fftSize);
+    // --- calibrate to the room: sample the ambient noise floor for ~900ms ---
+    active=false;setState("⏳ calibrating");statusEl.textContent="Measuring room noise — stay quiet a sec…";
+    let n=0,acc=0,peak=0;
+    await new Promise(res=>{const ci=setInterval(()=>{const r=rmsNow(buf);acc+=r;peak=Math.max(peak,r);n++;
+      if(n>=9){clearInterval(ci);res();}},100);});
+    const floor=acc/Math.max(1,n);
+    THRESH=Math.max(0.018, floor*2.4 + 0.010);      // speech must clearly exceed the room
+    setState("💤 asleep");statusEl.textContent="Say “Charlie” to wake me";
+    let bargeTicks=0;
+    vadTimer=setInterval(()=>{
+      if(Date.now()<muteVadUntil){return;}                       // ignore our own beep
+      const rms=rmsNow(buf), now=Date.now();
+      if(botSpeaking){                                            // barge-in: talk over Charlie to stop him
+        if(rms>THRESH*1.9){ if(++bargeTicks>=3){stopPlayback();setState("✋ interrupted — go ahead");bargeTicks=0;} }
+        else bargeTicks=0;
+        return;
+      }
+      if(rms>THRESH){ if(!speaking){beginSeg();if(active){setState("🎙️ hearing you…");}} speaking=true; silence=0;
+        if(now-segStart>MAX_MS){endSeg();speaking=false;} }
+      else if(speaking){ silence+=100; if(silence>=SILENCE_MS){ endSeg(); speaking=false; } }
+    },100);
+  }catch(err){sys("Mic error: "+err.message);sw.classList.remove("on");alwaysOn=false;}
+}
+function beginSeg(){segStart=Date.now();segChunks=[];
+  segRec=new MediaRecorder(micStream,{mimeType:MediaRecorder.isTypeSupported("audio/webm")?"audio/webm":""});
+  segRec.ondataavailable=e=>{if(e.data.size)segChunks.push(e.data);};segRec.start();}
+function endSeg(){if(!segRec)return;const dur=Date.now()-segStart, wasActive=active;
+  segRec.onstop=()=>{const blob=new Blob(segChunks,{type:segRec.mimeType||"audio/webm"});
+    if(dur>=MIN_MS&&blob.size>1200&&ws&&ws.readyState===1){
+      blob.arrayBuffer().then(b=>ws.send(b));
+      if(wasActive){beepGot();setState("💭 thinking…");statusEl.textContent="Got it — thinking…";}
+    }};
+  try{segRec.stop();}catch(e){}}
+function stopAlwaysOn(){if(vadTimer)clearInterval(vadTimer);try{segRec&&segRec.stop();}catch(e){}
+  if(micStream)micStream.getTracks().forEach(t=>t.stop());if(ac)ac.close();speaking=false;active=false;dot.classList.remove("armed");setState("");}
+
+sw.addEventListener("click",()=>{
+  alwaysOn=!alwaysOn;sw.classList.toggle("on",alwaysOn);sw.setAttribute("aria-checked",alwaysOn);
+  ptt.disabled=alwaysOn;ptt.classList.toggle("active",alwaysOn);ptt.textContent=alwaysOn?"Always-on mode":"Hold to talk";
+  if(ws&&ws.readyState===1)ws.send(JSON.stringify({type:"mode",always_on:alwaysOn}));
+  if(alwaysOn){beep([440]);startAlwaysOn();}else{stopAlwaysOn();statusEl.textContent="";heardEl.textContent="";}
+});
 connect();
 </script></body></html>
