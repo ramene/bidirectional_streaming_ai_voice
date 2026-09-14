@@ -1,0 +1,92 @@
+<!doctype html><html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Voice Loop — lead brain</title>
+<style>
+  :root{--bg:#0d1017;--panel:#161b26;--ink:#e8edf4;--muted:#93a0b4;--accent:#28c2a6;--user:#3a7afe;--line:#232a38}
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);font:16px/1.5 -apple-system,system-ui,sans-serif}
+  #app{display:flex;flex-direction:column;height:100dvh;max-width:720px;margin:0 auto}
+  header{padding:14px 18px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:10px}
+  header h1{font-size:16px;margin:0;font-weight:650}
+  .dot{width:9px;height:9px;border-radius:50%;background:#c0392b}.dot.on{background:var(--accent)}
+  #log{flex:1;overflow:auto;padding:16px;display:flex;flex-direction:column;gap:10px}
+  .msg{max-width:82%;padding:9px 13px;border-radius:14px;white-space:pre-wrap;word-wrap:break-word}
+  .u{align-self:flex-end;background:var(--user);color:#fff;border-bottom-right-radius:4px}
+  .a{align-self:flex-start;background:var(--panel);border:1px solid var(--line);border-bottom-left-radius:4px}
+  .a .eng{display:block;font-size:11px;color:var(--muted);margin-top:4px}
+  .sys{align-self:center;color:var(--muted);font-size:13px}
+  footer{padding:16px 18px calc(16px + env(safe-area-inset-bottom));border-top:1px solid var(--line)}
+  #ptt{width:100%;padding:20px;border:0;border-radius:16px;background:var(--accent);color:#04231d;
+       font-size:19px;font-weight:700;touch-action:none;user-select:none;transition:transform .06s,background .15s}
+  #ptt.rec{background:#e14b4b;color:#fff;transform:scale(.99)}
+  #ptt:disabled{opacity:.5}
+  #status{text-align:center;color:var(--muted);font-size:13px;min-height:18px;margin-top:8px}
+</style></head><body>
+<div id="app">
+  <header><span id="dot" class="dot"></span><h1>Voice Loop</h1><span id="eng" style="margin-left:auto;color:var(--muted);font-size:12px"></span></header>
+  <div id="log"></div>
+  <footer>
+    <button id="ptt" disabled>Connecting…</button>
+    <div id="status"></div>
+  </footer>
+</div>
+<script>
+const $=s=>document.querySelector(s), log=$("#log"), ptt=$("#ptt"), statusEl=$("#status"), dot=$("#dot"), engEl=$("#eng");
+const token=new URLSearchParams(location.search).get("token")||"";
+let ws, rec, chunks=[], recording=false;
+const audioQ=[]; let playing=false;
+
+function add(cls,txt,eng){const d=document.createElement("div");d.className="msg "+cls;d.textContent=txt;
+  if(eng){const e=document.createElement("span");e.className="eng";e.textContent=eng;d.appendChild(e);}
+  log.appendChild(d);log.scrollTop=log.scrollHeight;return d;}
+function sys(t){add("sys",t);}
+
+// --- audio playback queue (plays sentence chunks in order; avatar can hook 'onplay') ---
+function enqueue(b64){
+  const bytes=Uint8Array.from(atob(b64),c=>c.charCodeAt(0));
+  const blob=new Blob([bytes],{type:"audio/wav"});
+  audioQ.push(URL.createObjectURL(blob)); pump();
+}
+function pump(){
+  if(playing||!audioQ.length)return; playing=true;
+  const url=audioQ.shift(); const a=new Audio(url);
+  a.onended=a.onerror=()=>{URL.revokeObjectURL(url);playing=false;pump();};
+  a.play().catch(()=>{playing=false;pump();});
+}
+
+// --- websocket ---
+function connect(){
+  const proto=location.protocol==="https:"?"wss":"ws";
+  ws=new WebSocket(`${proto}://${location.host}/ws?token=${encodeURIComponent(token)}`);
+  ws.onopen=()=>{dot.classList.add("on");ptt.disabled=false;ptt.textContent="Hold to talk";sys("Connected. Hold the button, speak, release.");};
+  ws.onclose=()=>{dot.classList.remove("on");ptt.disabled=true;ptt.textContent="Reconnecting…";setTimeout(connect,1500);};
+  ws.onmessage=e=>{const m=JSON.parse(e.data);
+    if(m.type==="user_text")add("u",m.text);
+    else if(m.type==="reply_text")add("a",m.text,m.engine);
+    else if(m.type==="audio")enqueue(m.b64);
+    else if(m.type==="turn_end"){const t=m.timing||{};engEl.textContent=`stt ${t.stt||"–"}s · llm ${t.llm||"–"}s · total ${t.total||"–"}s`;statusEl.textContent="";ptt.disabled=false;}
+  };
+}
+
+// --- push-to-talk ---
+async function startRec(){
+  if(recording||!ws||ws.readyState!==1)return;
+  try{
+    const stream=await navigator.mediaDevices.getUserMedia({audio:true});
+    rec=new MediaRecorder(stream,{mimeType:MediaRecorder.isTypeSupported("audio/webm")?"audio/webm":""});
+    chunks=[];rec.ondataavailable=e=>{if(e.data.size)chunks.push(e.data);};
+    rec.onstop=()=>{stream.getTracks().forEach(t=>t.stop());
+      const blob=new Blob(chunks,{type:rec.mimeType||"audio/webm"});
+      if(blob.size>800&&ws.readyState===1){blob.arrayBuffer().then(b=>ws.send(b));statusEl.textContent="Thinking…";ptt.disabled=true;}
+      else statusEl.textContent="Too short — hold longer.";};
+    rec.start();recording=true;ptt.classList.add("rec");ptt.textContent="Release to send";statusEl.textContent="Listening…";
+  }catch(err){sys("Mic error: "+err.message);}
+}
+function stopRec(){if(!recording)return;recording=false;ptt.classList.remove("rec");ptt.textContent="Hold to talk";try{rec.stop();}catch(e){}}
+// pointer events cover mouse + touch (iPad/iPhone Safari)
+ptt.addEventListener("pointerdown",e=>{e.preventDefault();startRec();});
+ptt.addEventListener("pointerup",e=>{e.preventDefault();stopRec();});
+ptt.addEventListener("pointercancel",stopRec);
+connect();
+</script></body></html>

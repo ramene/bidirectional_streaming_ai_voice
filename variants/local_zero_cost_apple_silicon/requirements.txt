@@ -1,0 +1,11 @@
+# Local $0 Apple-Silicon variant — Python >=3.10 (mlx-audio needs 3.10+)
+mlx-whisper        # on-device STT (Whisper large-v3-turbo)
+mlx-audio          # on-device TTS (Kokoro-82M)
+misaki[en]         # Kokoro g2p (English)
+soundfile          # wav encode
+numpy
+fastapi            # web + websocket server
+uvicorn[standard]
+anthropic          # OPTIONAL: only used if ANTHROPIC_API_KEY is set (hard-turn arm)
+# LLM is any OpenAI-compatible local server (Ollama / LM Studio / vLLM / llama.cpp) — no package needed.
+# System deps: espeak-ng (brew install espeak-ng), ffmpeg (for mlx-whisper audio decode).
